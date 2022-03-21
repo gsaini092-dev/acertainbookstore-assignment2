@@ -203,6 +203,7 @@ public class TwoLevelLockingConcurrentCertainBookStore implements BookStore, Sto
 			for (StockBook book : bookSet) {
 				int isbn = book.getISBN();
 				bookMap.put(isbn, new BookStoreBook(book));
+				lockMap.put(isbn, new ReentrantReadWriteLock());
 			}
 		} finally {
 			releaseGlobalLock();
@@ -643,6 +644,7 @@ public class TwoLevelLockingConcurrentCertainBookStore implements BookStore, Sto
 
 			for (int isbn : isbnSet) {
 				bookMap.remove(isbn);
+				lockMap.remove(isbn);
 			}
 		} finally {
 			releaseGlobalLock();

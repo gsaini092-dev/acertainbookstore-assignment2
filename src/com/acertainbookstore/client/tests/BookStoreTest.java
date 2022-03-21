@@ -16,6 +16,8 @@ import org.junit.Test;
 
 import com.acertainbookstore.business.Book;
 import com.acertainbookstore.business.BookCopy;
+import com.acertainbookstore.business.BookEditorPick;
+import com.acertainbookstore.business.BookRating;
 import com.acertainbookstore.business.SingleLockConcurrentCertainBookStore;
 import com.acertainbookstore.business.ImmutableStockBook;
 import com.acertainbookstore.business.StockBook;
@@ -44,7 +46,7 @@ public class BookStoreTest {
 	private static boolean localTest = true;
 
 	/** Single lock test */
-	private static boolean singleLock = true;
+	private static boolean singleLock = false;
 
 	
 	/** The store manager. */
@@ -366,6 +368,58 @@ public class BookStoreTest {
 	}
 
 	/**
+	 * Tests that concurrently adding copies and buying books maintain consistent state
+	 *
+	 * @throws BookStoreException
+	 */
+	@Test
+	public void testBuyAndAddConcurrent() throws BookStoreException {
+	 	int ITERATIONS = 100000;
+
+		Set<BookCopy> copiesToAdd = new HashSet<>();
+
+		BookCopy book = new BookCopy(TEST_ISBN, ITERATIONS);
+		copiesToAdd.add(book);
+		storeManager.addCopies(copiesToAdd);
+		HashSet<BookCopy> oneBook = new HashSet<>(Arrays.asList(new BookCopy(TEST_ISBN, 1)));
+		
+        Thread C1 = new Thread(() -> {
+            try {
+                for(int i = 0; i < ITERATIONS; i++) {
+                    client.buyBooks(oneBook);
+                }
+            } catch (BookStoreException ex) {
+            	;
+			}
+        });
+      
+
+        Thread C2 = new Thread(() -> {
+			try {
+				for(int i = 0; i < ITERATIONS; i++) {
+					storeManager.addCopies(oneBook);
+				}
+			} catch (BookStoreException ex) {
+				;
+			}
+        });
+        
+        C1.start();
+        C2.start();
+
+        try {
+			C1.join();
+			C2.join();
+		} catch (InterruptedException ex) {
+        	fail();
+		}
+
+		List<StockBook> booksInStore = storeManager.getBooks();
+        StockBook defaultBook = booksInStore.get(0);
+		assertTrue(defaultBook.getNumCopies() == ITERATIONS + NUM_COPIES);
+	}
+	
+	/**
 	 * Spawns two threads that buy books and remove copies in an indeterministic
 	 * fashion, verifying that the final amount of books correspondings to the sum
 	 * of operations performed by the two threads.
@@ -399,7 +453,7 @@ public class BookStoreTest {
 		Thread addCopiesThread =
 		    new Thread(new AddCopiesProcess(storeManager, copies, iterations));
 		buyBooksThread.start();
-		SleepThread();
+		//SleepThread();
 		addCopiesThread.start();
 		
 		try {
@@ -415,16 +469,7 @@ public class BookStoreTest {
 		assertEquals(totalBooks, bookList.get(1).getNumCopies());
 
 	}
-
-	private void SleepThread() {
-		try {
-			Thread.sleep(2000);
-		} catch (InterruptedException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-	}
-
+	
 	/**
 	 * Continously buys/adds copies of books to the store in one thread, while
 	 * another thread probes the stock a number of times to verify that the result
@@ -454,7 +499,7 @@ public class BookStoreTest {
 		// The modifying thread continously buys/adds books until stopped
 		Thread modifyThread =
 		    new Thread(new ModifyProcess(client, storeManager, copies));
-    modifyThread.start();
+		modifyThread.start();
 
 		// This thread acts as the one verifying results, no reason to spawn a new
 		// one
@@ -474,7 +519,7 @@ public class BookStoreTest {
 	 * exceptions. The main thread continously checks that the books are in a
 	 * valid state.
 	 */
-	@Test
+	//@Test
 	public void testConcurrency3() throws BookStoreException {
 
 		// Times to check valid state of database
@@ -503,11 +548,11 @@ public class BookStoreTest {
 		Thread removeThread1 =
 		    new Thread(new RemoveBooksProcess(storeManager, isbns));
 		addThread0.start();
-		SleepThread();
+		//SleepThread();
 		addThread1.start();
-		SleepThread();
+		//SleepThread();
 		removeThread0.start();
-		SleepThread();
+		//SleepThread();
 		removeThread1.start();
 
 		for (int i = 0; i < repetitions; ++i) {
@@ -533,7 +578,7 @@ public class BookStoreTest {
 	 * book copies concurrently to make sure no deadlocks or unexpected exceptions
 	 * occur.
 	 */
-	@Test
+	//@Test
 	public void testConcurrency4() throws BookStoreException {
 
 		int repetitions = 10000;
@@ -588,61 +633,255 @@ public class BookStoreTest {
 		for (Thread thread : endlessThreads) thread.interrupt();
 
 	}
-	
+
 	/**
-	 * Tests that concurrently adding copies and buying books maintain consistent state
+	 * Tests that addCopies and buyBooks respect before-and-after semantics.
+	 * That is, it is not possible to see a state where a call to addCopies or buyBooks is half-finished.
 	 *
 	 * @throws BookStoreException
 	 */
 	@Test
-	public void testBuyAndAddConcurrent() throws BookStoreException {
-	 	int ITERATIONS = 1000000;
+	public void testBuyAndAddConsistency() throws BookStoreException {
+		int ITERATIONS = 100000;
+		int INITIAL_COPIES = 10;
 
-		Set<BookCopy> copiesToAdd = new HashSet<>();
+		// Adding some books to the store
+		Set<StockBook> booksToAdd = new HashSet<StockBook>();
+		StockBook book1 = new ImmutableStockBook(1, "Book1", "George RR Testin'", (float) 10, INITIAL_COPIES, 0, 0,
+				0, false);
+		StockBook book2 = new ImmutableStockBook(2, "Book2", "Ernest Testingway", (float) 10, INITIAL_COPIES, 0, 0,
+				0, false);
+		StockBook book3 = new ImmutableStockBook(3, "Book3", "Ursula K. Le Test", (float) 10, INITIAL_COPIES, 0, 0,
+				0, false);
+		booksToAdd.add(book1); booksToAdd.add(book2); booksToAdd.add(book3);
+		storeManager.addBooks(booksToAdd);
 
-		BookCopy book = new BookCopy(TEST_ISBN, ITERATIONS);
-		copiesToAdd.add(book);
-		storeManager.addCopies(copiesToAdd);
-		HashSet<BookCopy> oneBook = new HashSet<>(Arrays.asList(new BookCopy(TEST_ISBN, 1)));
-		
-        Thread C1 = new Thread(() -> {
-            try {
-                for(int i = 0; i < ITERATIONS; i++) {
-                    client.buyBooks(oneBook);
-                }
-            } catch (BookStoreException ex) {
-            	;
-			}
-        });
-      
+		// The set of books to buy and add
+		Set<BookCopy> bookSet = new HashSet<>();
+		BookCopy copy1 = new BookCopy(1,1);
+		BookCopy copy2 = new BookCopy(2,2);
+		BookCopy copy3 = new BookCopy(3,3);
+		bookSet.add(copy1); bookSet.add(copy2); bookSet.add(copy3);
 
-        Thread C2 = new Thread(() -> {
+		Thread C1 = new Thread(() -> {
 			try {
 				for(int i = 0; i < ITERATIONS; i++) {
-					storeManager.addCopies(oneBook);
-				}
-			} catch (BookStoreException ex) {
-				;
-			}
-        });
-        
-        C1.start();
-        SleepThread();
-        C2.start();
+					client.buyBooks(bookSet);
 
-        try {
+					storeManager.addCopies(bookSet);
+				}
+			} catch (BookStoreException ex) {}
+		});
+		C1.start();
+
+		HashSet<Integer> isbnSet = new HashSet<>();
+		isbnSet.add(1); isbnSet.add(2); isbnSet.add(3);
+
+		Thread C2 = new Thread(() -> {
+			try {
+				for(int i = 0; i < ITERATIONS; i++) {
+					List<StockBook> booksInStock = storeManager.getBooksByISBN(isbnSet);
+					for (StockBook book : booksInStock) {
+						for (BookCopy buyCopy : bookSet) {
+							if (book.getISBN() == buyCopy.getISBN()) {
+								int copies = book.getNumCopies();
+								assertTrue(copies == INITIAL_COPIES
+										|| copies == INITIAL_COPIES - buyCopy.getNumCopies());
+								break;
+							}
+						}
+					}
+				}
+			} catch (BookStoreException ex) {}
+		});
+		C2.start();
+
+		try {
 			C1.join();
 			C2.join();
 		} catch (InterruptedException ex) {
-        	fail();
+			fail();
 		}
 
-		List<StockBook> booksInStore = storeManager.getBooks();
-        StockBook defaultBook = booksInStore.get(0);
-        System.out.println(defaultBook.getNumCopies() + " --- " + ITERATIONS + NUM_COPIES);
-		assertTrue(defaultBook.getNumCopies() == ITERATIONS + NUM_COPIES);
 	}
+	
+	/**
+	 * Tests that addBooks and removeBooks respect before-and-after semantics.
+	 * That is, it is not possible to see a state where a call to addBooks or removeBooks is half-finished.
+	 *
+	 * @throws BookStoreException
+	 */
+	//@Test
+	public void testAddAndRemoveConcurrent() {
+		int ITERATIONS = 100000;
+		int INITIAL_COPIES = 10;
+		Set<StockBook> booktoAdd = new HashSet<StockBook>();
+		HashSet<Integer> isbnSet = new HashSet<Integer>();
+		StockBook book1 = new ImmutableStockBook(1, "NewBook", "George RR Testin'", (float) 10, INITIAL_COPIES, 0, 0,
+				0, false); 
+		StockBook book2 = new ImmutableStockBook(2, "Book2", "George  Orwell'", (float) 10, INITIAL_COPIES, 0, 0,
+				0, false); 
+		StockBook book3 = new ImmutableStockBook(3, "Book3", "Ursula K. Le Test", (float) 10, INITIAL_COPIES, 0, 0,
+				0, false);
+		booktoAdd.add(book1);booktoAdd.add(book2);booktoAdd.add(book3);
+		isbnSet.add(book1.getISBN());isbnSet.add(book2.getISBN());isbnSet.add(book3.getISBN());
+		Thread C1 = new Thread(()->{
+			for (int i = 0; i < ITERATIONS; i++ ){
+				try {
+					storeManager.addBooks(booktoAdd);
+					storeManager.removeBooks(isbnSet);
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+		});
+		C1.start();
+		
+        for(int i = 0; i < ITERATIONS; i++){
+            try {
+                List<StockBook> bookInStock = storeManager.getBooks();
+                assertTrue(bookInStock.size()==1
+                        ||bookInStock.size() == 1 + booktoAdd.size() );
+                break;
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
 
+		try{
+			C1.join();
+		}catch (InterruptedException ex) {
+			fail();
+		}
+	}
+    
+	/**
+	 * Tests that updateEditorPicks 
+	 *
+	 * @throws BookStoreException
+	 */
+	
+	//@Test
+	public void testUpdateEditorPicks() throws BookStoreException, InterruptedException {
+		int ITERATIONS = 100000;
+		int NUMBER_OF_BOOKS = 1000;
+
+		//Add books to the store
+		Set<StockBook> bookToStock = new HashSet<StockBook>();
+		for (int i = 1; i <= NUMBER_OF_BOOKS; i++) {
+			StockBook book = new ImmutableStockBook(i, "F", "A", (float) 10, 10, 0, 0,
+					0, false);
+			bookToStock.add(book);
+		}
+		storeManager.addBooks(bookToStock);
+
+		Set<BookEditorPick> bookToTrue = new HashSet<BookEditorPick>();
+		Set<BookEditorPick> bookToFalse = new HashSet<BookEditorPick>();
+
+		for (int i = 1; i <= NUMBER_OF_BOOKS; i++) {
+			BookEditorPick pickT = new BookEditorPick(i,true);
+			bookToTrue.add(pickT);
+
+			BookEditorPick pickF = new BookEditorPick(i,false);
+			bookToFalse.add(pickF);
+		}
+
+		List<StockBook> allBooks = storeManager.getBooks();
+		assertTrue(allBooks.size() == NUMBER_OF_BOOKS + 1); //Remember the default book
+		assertTrue(client.getEditorPicks(1).size() == 0);
+
+		Thread C1 = new Thread(()->{
+			try {
+				for (int i = 0; i < ITERATIONS; i++){
+					storeManager.updateEditorPicks(bookToTrue);
+				}
+			} catch (BookStoreException ex) {
+				ex.printStackTrace();
+			}
+		});
+
+		Thread C2 = new Thread(()-> {
+			for (int i = 0; i < ITERATIONS; i++) {
+				try {
+					storeManager.updateEditorPicks(bookToFalse);
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+		});
+
+		C1.start();
+		C2.start();
+
+		for (int i = 0; i < ITERATIONS; i++) {
+			int numberOfPicks = client.getEditorPicks(NUMBER_OF_BOOKS).size();
+			assertTrue(numberOfPicks == NUMBER_OF_BOOKS
+					|| numberOfPicks == 0);
+		}
+
+        C1.join();
+        C2.join();
+	}
+	
+	/**
+	 * Test that rate books respect before-and-after semantics.
+	 *
+	 * @throws BookStoreException
+	 *             the book store exception
+	 */
+
+    @Test
+
+    public void testRatedBooks() throws BookStoreException  {
+        
+    	int ITERATIONS = 100000;
+		Set<StockBook> bookToStock = new HashSet<StockBook>();
+
+		HashSet<BookRating> isbnList1 = new HashSet<>();
+
+		StockBook book1 = new ImmutableStockBook(1, "F", "A", (float) 10, 10, 0, 0,
+				0, false);
+		StockBook book2 = new ImmutableStockBook(2, "F", "A", (float) 10, 10, 0, 0,
+				0, false);
+		StockBook book3 = new ImmutableStockBook(3, "F", "A", (float) 10, 10, 0, 0,
+				0, false);
+		bookToStock.add(book1);bookToStock.add(book2);bookToStock.add(book3);
+		
+		storeManager.addBooks(bookToStock);
+
+		isbnList1.add(new BookRating(1,1));
+		isbnList1.add(new BookRating(2,1));
+		isbnList1.add(new BookRating(3,1));
+
+		Thread C1 = new Thread(()->{
+			try {
+				for (int i = 0; i < ITERATIONS; i++){
+					client.rateBooks(isbnList1);
+				}
+			} catch (BookStoreException ex) {
+				ex.printStackTrace();
+			}
+		});
+
+		C1.start();
+
+		try {
+			for (int i = 0; i < ITERATIONS; i++){
+			    Set<Integer> isbns = new HashSet<>(Arrays.asList(1,2,3));
+				List<StockBook> sbooks = storeManager.getBooksByISBN(isbns);
+				assertTrue(sbooks.get(0).getTotalRating() == sbooks.get(1).getTotalRating()
+							&& sbooks.get(0).getTotalRating() == sbooks.get(2).getTotalRating());
+			}
+		} catch (BookStoreException ex) {
+			ex.printStackTrace();
+		}
+		
+		try {
+			C1.join();
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
+    }
 	
 	/**
 	 * Tear down after class.

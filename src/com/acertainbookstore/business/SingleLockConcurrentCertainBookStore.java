@@ -208,7 +208,7 @@ public class SingleLockConcurrentCertainBookStore implements BookStore, StockMan
 				throw new BookStoreException(BookStoreConstants.NULL_INPUT);
 			}
 
-			int isbnValue;
+			int isbnValue = 1;
 
 			for (BookEditorPick editorPickArg : editorPicks) {
 				validate(editorPickArg);
